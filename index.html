@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calibrador Giro LNB (Skew)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: monospace; user-select: none; }
+    body { background: #070b12; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 12px; }
+    .app { background: #111827; border: 2px solid #f59e0b; border-radius: 16px; padding: 16px; width: 100%; max-width: 400px; }
+    .top { display: flex; justify-content: space-between; font-size: 12px; color: #f59e0b; font-weight: bold; margin-bottom: 10px; }
+    select, button { width: 100%; padding: 10px; border-radius: 8px; border: none; font-weight: bold; font-size: 12px; margin-bottom: 10px; }
+    select { background: #1e293b; color: #fff; border: 1px solid #334155; }
+    .dial { position: relative; width: 200px; height: 200px; margin: 8px auto 12px; border-radius: 50%; border: 3px solid #334155; background: #020617; display: flex; justify-content: center; align-items: center; }
+    .marca-cero { position: absolute; top: 4px; width: 2px; height: 14px; background: #64748b; }
+    .lnb-cuerpo { width: 70px; height: 70px; border-radius: 50%; border: 3px solid #f59e0b; background: #1e293b; display: flex; justify-content: center; align-items: center; position: relative; transition: transform 0.1s; }
+    .conector-cable { position: absolute; bottom: -26px; width: 14px; height: 26px; background: #f59e0b; border-radius: 0 0 4px 4px; }
+    .linea-obj { position: absolute; width: 2px; height: 180px; border-left: 2px dashed #22c55e; pointer-events: none; }
+    .box { background: #0f172a; padding: 10px; border-radius: 8px; border: 1px solid #1e293b; text-align: center; font-size: 12px; margin-bottom: 10px; }
+    .ok { border-color: #22c55e !important; color: #4ade80; }
+    .b-sen { background: #d97706; color: #fff; }
+    .b-sav { background: #16a34a; color: #fff; }
+    .logs { background: #020617; border: 1px dashed #334155; padding: 8px; border-radius: 8px; max-height: 75px; overflow-y: auto; font-size: 10px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="top"><span>🎛️ CALIBRADOR GIRO LNB</span><span id="gpsLnb">PUYO</span></div>
+    <select id="selSat" onchange="calcSkew()">
+      <option value="-61.0">📺 Claro TV / Amazonas (61°W)</option>
+      <option value="-95.0">📺 DirecTV Galaxy 3C (95°W)</option>
+      <option value="-70.0">📺 CNT TV / Star One C4 (70°W)</option>
+      <option value="-58.0">📡 Intelsat 21 / 34 (58°W)</option>
+      <option value="-30.0">📡 Hispasat 30W-5 (30°W)</option>
+    </select>
+    <div class="dial">
+      <div class="marca-cero"></div>
+      <div class="linea-obj" id="lineaObj"></div>
+      <div class="lnb-cuerpo" id="lnbVisual">LNB<div class="conector-cable"></div></div>
+    </div>
+    <div class="box" id="boxSkew">
+      GIRO ACTUAL: <b id="curGiro">0°</b> | OBJETIVO: <b id="objGiro">0°</b><br>
+      <span id="instruccion" style="font-size:10px; color:#94a3b8;">Apoya el iPhone frente al LNB</span>
+    </div>
+    <button class="b-sen" onclick="activarGiro()">📐 ACTIVAR SENSOR DE INCLINACIÓN</button>
+    <button class="b-sav" onclick="guardarLnb()">💾 GUARDAR CALIBRACIÓN LNB</button>
+    <div class="logs" id="logsLnb"></div>
+  </div>
+  <script>
+    const KEY_LNB = 'calibrador_lnb_v1';
+    let lat = -1.4837, lon = -78.0026; // Puyo, Pastaza por defecto
+    let objSkew = 0, curSkew = 0, ctxA = null;
+    let lista = JSON.parse(localStorage.getItem(KEY_LNB)) || [];
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(p => {
+        lat = p.coords.latitude; lon = p.coords.longitude;
+        document.getElementById('gpsLnb').innerText = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+        calcSkew();
+      });
+    }
+
+    function calcSkew() {
+      const satLon = parseFloat(document.getElementById('selSat').value);
+      const dLon = (satLon - lon) * Math.PI / 180;
+      const latR = lat * Math.PI / 180;
+      const skewRad = Math.atan2(Math.sin(dLon), Math.tan(latR));
+      objSkew = Math.round(skewRad * 180 / Math.PI);
+      if (objSkew > 90) objSkew -= 180;
+      if (objSkew < -90) objSkew += 180;
+      ui();
+    }
+    function beep() {
+      if (!ctxA) ctxA = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctxA.createOscillator(), g = ctxA.createGain();
+      o.frequency.value = 1350; g.gain.value = 0.08;
+      o.connect(g); g.connect(ctxA.destination);
+      o.start(); o.stop(ctxA.currentTime + 0.06);
+    }
+
+    async function activarGiro() {
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        await DeviceOrientationEvent.requestPermission();
+      }
+      window.addEventListener('deviceorientation', e => {
+        curSkew = Math.round(Math.max(-90, Math.min(90, (e.gamma || 0))));
+        ui();
+      });
+    }
+    function ui() {
+      const diff = Math.abs(curSkew - objSkew);
+      const lado = objSkew < 0 ? 'IZQUIERDA (Antihorario)' : (objSkew > 0 ? 'DERECHA (Horario)' : 'RECTO (0°)');
+      document.getElementById('lineaObj').style.transform = `rotate(${objSkew}deg)`;
+      document.getElementById('lnbVisual').style.transform = `rotate(${curSkew}deg)`;
+      document.getElementById('curGiro').innerText = `${curSkew}°`;
+      document.getElementById('objGiro').innerText = `${objSkew}°`;
+      document.getElementById('instruccion').innerText = `Girar cable hacia: ${lado}`;
+      document.getElementById('boxSkew').className = diff <= 4 ? 'box ok' : 'box';
+      if (diff <= 4) beep();
+    }
+
+    function guardarLnb() {
+      const sat = document.getElementById('selSat').options[document.getElementById('selSat').selectedIndex].text.slice(0, 18);
+      lista.unshift(`${new Date().toLocaleTimeString()} | ${sat} | Skew: ${objSkew}°`);
+      localStorage.setItem(KEY_LNB, JSON.stringify(lista));
+      render();
+    }
+    function render() { document.getElementById('logsLnb').innerHTML = lista.map(l => `<div>✅ ${l}</div>`).join('') || 'Sin registros...'; }
+    calcSkew(); render();
+  </script>
+</body>
+</html>
